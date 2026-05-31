@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DarkChat - Realtime Web Messenger</title>
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+    <style>
+        :root {
+            --bg-main: #0b141a;
+            --bg-sidebar: #111b21;
+            --bg-chat: #0b141a;
+            --panel-header: #202c33;
+            --incoming-msg: #202c33;
+            --outgoing-msg: #005c4b;
+            --text-main: #e9edef;
+            --text-muted: #8696a0;
+            --accent: #00a884;
+            --input-bg: #2a3942;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        }
+
+        body {
+            background-color: var(--bg-main);
+            color: var(--text-main);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        .app-container {
+            display: flex;
+            width: 100%;
+            height: 100%;
+            max-width: 1600px;
+            background-color: var(--bg-sidebar);
+            box-shadow: 0 6px 18px rgba(0,0,0,0.5);
+        }
+
+        /* Setup / Connection Panel */
+        .setup-screen {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: var(--bg-main);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 10;
+            padding: 20px;
+        }
+
+        .setup-box {
+            background: var(--bg-sidebar);
+            padding: 30px;
+            border-radius: 10px;
+            width: 100%;
+            max-width: 400px;
+            text-align: center;
+            border-top: 5px solid var(--accent);
+        }
+
+        .setup-box h2 { margin-bottom: 20px; }
+
+        input, button {
+            width: 100%;
+            padding: 12px;
+            margin: 10px 0;
+            border-radius: 8px;
+            border: none;
+            outline: none;
+            font-size: 16px;
+        }
+
+        input {
+            background: var(--input-bg);
+            color: var(--text-main);
+        }
+
+        button {
+            background: var(--accent);
+            color: white;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        button:hover { background: #008f72; }
+
+        /* Main Chat Layout */
+        .main-chat {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background-color: var(--bg-chat);
+            position: relative;
+        }
+
+        .chat-header {
+            height: 60px;
+            background-color: var(--panel-header);
+            display: flex;
+            align-items: center;
+            padding: 0 20px;
+            justify-content: space-between;
+        }
+
+        .room-info h4 { color: var(--text-main); }
+        .room-info p { color: var(--text-muted); font-size: 12px; }
+
+        .messages-container {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            background-image: linear-gradient(rgba(11, 20, 26, 0.95), rgba(11, 20, 26, 0.95)), url('https://user-images.githubusercontent.com/15075759/28719144-86dc0f70-73b1-11e7-911d-60d70fcded21.png');
+        }
+
+        .message {
+            max-width: 65%;
+            padding: 8px 12px;
+            border-radius: 8px;
+            font-size: 14.5px;
+            line-height: 1.4;
+            position: relative;
+            word-wrap: break-word;
+            animation: fadeIn 0.2s ease-in-out;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(5px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .message .meta {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-bottom: 3px;
+            font-weight: bold;
+        }
+
+        .message.incoming {
+            background-color: var(--incoming-msg);
+            align-self: flex-start;
+            border-top-left-radius: 0;
+        }
+
+        .message.outgoing {
+            background-color: var(--outgoing-msg);
+            align-self: flex-end;
+            border-top-right-radius: 0;
+        }
+
+        .chat-input-area {
+            height: 62px;
+            background-color: var(--panel-header);
+            display: flex;
+            align-items: center;
+            padding: 5px 15px;
+            gap: 10px;
+        }
+
+        .chat-input-area input {
+            margin: 0;
+            background: var(--input-bg);
+        }
+
+        .chat-input-area button {
+            width: auto;
+            padding: 12px 24px;
+            margin: 0;
+        }
+        
+        .hidden { display: none !important; }
+    </style>
+</head>
+<body>
+
+    <div id="setupScreen" class="setup-screen">
+        <div class="setup-box">
+            <h2>Join DarkChat</h2>
+            <p style="color: var(--text-muted); font-size: 14px; margin-bottom: 15px;">
+                Enter your name and a unique Room Name. Share the exact room name with your friend to chat.
+            </p>
+            <input type="text" id="usernameInput" placeholder="Your Name" required>
+            <input type="text" id="roomInput" placeholder="Room Name (e.g., secret-room-123)" required>
+            <button onclick="connectToChat()">Connect</button>
+        </div>
+    </div>
+
+    <div class="app-container">
+        <div class="main-chat">
+            <div class="chat-header">
+                <div class="room-info">
+                    <h4 id="displayRoomName">Not Connected</h4>
+                    <p id="displayUsername">Connecting...</p>
+                </div>
+            </div>
+            
+            <div class="messages-container" id="messagesContainer">
+                </div>
+
+            <div class="chat-input-area">
+                <input type="text" id="messageInput" placeholder="Type a message" onkeypress="handleKeyPress(event)">
+                <button onclick="sendMessage()">Send</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let client;
+        let currentRoom = "";
+        let username = "";
+
+        // Check URL parameters for automatic room joining if shared
+        window.onload = function() {
+            const urlParams = new URLSearchParams(window.location.search);
+            if(urlParams.get('room')) {
+                document.getElementById('roomInput').value = urlParams.get('room');
+            }
+        }
+
+        function connectToChat() {
+            username = document.getElementById('usernameInput').value.trim();
+            currentRoom = document.getElementById('roomInput').value.trim().toLowerCase().replace(/[^a-z0-9]/g, '-');
+
+            if (!username || !currentRoom) {
+                alert("Please enter both a username and a room name.");
+                return;
+            }
+
+            // Using a public, free MQTT broker over WebSockets for serverless synchronization
+            // Note: Public brokers are fine for testing/learning, but unencrypted/visible to others using the same room id.
+            const brokerUrl = 'wss://broker.hivemq.com:8000/mqtt';
+            
+            document.getElementById('displayRoomName').innerText = "Room: " + currentRoom;
+            document.getElementById('displayUsername').innerText = "Logged in as: " + username;
+
+            client = mqtt.connect(brokerUrl);
+
+            client.on('connect', () => {
+                // Subscribe to the unique room topic
+                client.subscribe(`darkchat/rooms/${currentRoom}`, (err) => {
+                    if (!err) {
+                        document.getElementById('setupScreen').classList.add('hidden');
+                        appendSystemMessage("Connected to room successfully.");
+                    } else {
+                        alert("Failed to connect to the routing broker.");
+                    }
+                });
+            });
+
+            client.on('message', (topic, message) => {
+                try {
+                    const data = JSON.parse(message.toString());
+                    displayMessage(data);
+                } catch (e) {
+                    console.error("Error parsing incoming message", e);
+                }
+            });
+        }
+
+        function sendMessage() {
+            const input = document.getElementById('messageInput');
+            const text = input.value.trim();
+            
+            if (!text || !client) return;
+
+            const payload = {
+                sender: username,
+                text: text,
+                timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                id: Math.random().toString(36).substr(2, 9) // Random ID to isolate self messages
+            };
+
+            // Publish message to the room topic
+            client.publish(`darkchat/rooms/${currentRoom}`, JSON.stringify(payload));
+            input.value = '';
+        }
+
+        function displayMessage(data) {
+            const container = document.getElementById('messagesContainer');
+            const isSelf = data.sender === username;
+            
+            const msgDiv = document.createElement('div');
+            msgDiv.classList.add('message');
+            msgDiv.classList.add(isSelf ? 'outgoing' : 'incoming');
+
+            msgDiv.innerHTML = `
+                <div class="meta">${isSelf ? 'You' : escapeHTML(data.sender)} • ${data.timestamp}</div>
+                <div class="text">${escapeHTML(data.text)}</div>
+            `;
+
+            container.appendChild(msgDiv);
+            container.scrollTop = container.scrollHeight; // Auto-scroll to bottom
+        }
+
+        function appendSystemMessage(text) {
+            const container = document.getElementById('messagesContainer');
+            const sysDiv = document.createElement('div');
+            sysDiv.style.alignSelf = 'center';
+            sysDiv.style.background = '#182229';
+            sysDiv.style.color = 'var(--text-muted)';
+            sysDiv.style.fontSize = '12px';
+            sysDiv.style.padding = '5px 12px';
+            sysDiv.style.borderRadius = '5px';
+            sysDiv.style.margin = '10px 0';
+            sysDiv.innerText = text;
+            container.appendChild(sysDiv);
+        }
+
+        function handleKeyPress(e) {
+            if (e.key === 'Enter') {
+                sendMessage();
+            }
+        }
+
+        function escapeHTML(str) {
+            return str.replace(/[&<>'"]/g, 
+                tag => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[tag] || tag)
+            );
+        }
+    </script>
+</body>
+</html>
